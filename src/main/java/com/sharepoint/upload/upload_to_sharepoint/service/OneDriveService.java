@@ -18,56 +18,13 @@ import java.util.Map;
 @Service
 public class OneDriveService {
 
-    @Value("${onedrive.auth.url}")
-    private String authUrl;
-
-    @Value("${onedrive.token.url}")
-    private String tokenUrl;
-
     @Value("${onedrive.upload.url}")
     private String uploadUrl;
 
-    @Value("${onedrive.client.id}")
-    private String clientId;
-
-    @Value("${onedrive.client.secret}")
-    private String clientSecret;
-
-    @Value("${onedrive.redirect.uri}")
-    private String redirectUri;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    /**
-     * Step 1: Generate the Microsoft Login URL for Authorization
-     */
-    public String getAuthCodeUrl() {
-        return authUrl + "?client_id=" + clientId +
-                "&response_type=code" +
-                "&redirect_uri=" + redirectUri +
-                "&scope=Files.ReadWrite" +
-                "&state=randomState";
-    }
 
-    /**
-     * Step 2: Exchange Authorization Code for Access Token
-     */
-    public String getAccessToken(String authCode) {
-        Map<String, String> params = new HashMap<>();
-        params.put("client_id", clientId);
-        params.put("client_secret", clientSecret);
-        params.put("grant_type", "authorization_code");
-        params.put("redirect_uri", redirectUri);
-        params.put("code", authCode);
-        params.put("scope", "Files.ReadWrite");
-
-        Map<String, Object> response = restTemplate.postForObject(tokenUrl, params, Map.class);
-        return response != null ? (String) response.get("access_token") : null;
-    }
-
-    /**
-     * Step 3: Upload File to OneDrive
-     */
     public String uploadFile(String filePath, String accessToken, String contentType) throws IOException {
         File file = new File(filePath);
         if (!file.exists()) {

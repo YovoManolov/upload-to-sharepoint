@@ -1,58 +1,85 @@
 package com.sharepoint.upload.upload_to_sharepoint.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.FileInputStream;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.time.Instant;
+import java.util.Date;
+import java.util.Enumeration;
 import java.util.Map;
 
 @Service
 public class TokenService {
 
-    private static final Logger logger = LoggerFactory.getLogger(TokenService.class);
-
-    @Value("${onedrive.tenant.id}")
-    private String tenantId;
+    @Value("${onedrive.token.url}")
+    private String tokenUrl;
 
     @Value("${onedrive.client.id}")
     private String clientId;
 
-    @Value("${onedrive.client.secret}")
-    private String clientSecret;
+    @Value("${onedrive.tenant.id}")
+    private String tenantId;
 
-    private static final String TOKEN_URL_TEMPLATE = "https://login.microsoftonline.com/%s/oauth2/v2.0/token";
-    private static final String SCOPE = "https://graph.microsoft.com/.default";
+    @Value("${onedrive.pfx.path}")
+    private String pfxPath;  // Path to `.pfx` file
 
-    public String getAccessToken() {
-        RestTemplate restTemplate = new RestTemplate();
-        String tokenUrl = String.format(TOKEN_URL_TEMPLATE, tenantId);
+    @Value("${onedrive.pfx.password}")
+    private String pfxPassword;  // Password for `.pfx`
 
-        logger.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++");
-        logger.debug("Token URL: {}", tokenUrl);
-        logger.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++");
+    private final RestTemplate restTemplate = new RestTemplate();
 
-        Map<String, String> requestBody = Map.of(
-                "client_id", clientId,
-                "client_secret", clientSecret,
-                "scope", SCOPE,
-                "grant_type", "client_credentials"
-        );
+    /**
+     * Step 1: Generate a JWT `client_assertion` from `.pfx`
+     */
+    public String generateClientAssertion() throws Exception {
+        PrivateKey privateKey = getPrivateKeyFromPFX();
+        Instant now = Instant.now();
+        String jwt = Jwts.builder()
+                .setIssuer(clientId)
+                .setSubject(clientId)
+                .setAudience(tokenUrl)
+                .setIssuedAt(Date.from(now))
+                .setExpiration(Date.from(now.plusSeconds(600)))
+                .signWith(SignatureAlgorithm.RS256, privateKey)
+                .compact();
+        return jwt;
+    }
 
-        logger.debug("Request Body: {}", requestBody);
+    /**
+     * Step 2: Extract Private Key from `.pfx`
+     */
+    private PrivateKey getPrivateKeyFromPFX() throws Exception {
+        FileInputStream fis = new FileInputStream(pfxPath);
+        KeyStore keystore = KeyStore.getInstance("PKCS12");
+        keystore.load(fis, pfxPassword.toCharArray());
+        fis.close();
 
-        final Map response = restTemplate.postForObject(tokenUrl, requestBody, Map.class);
+        Enumeration<String> aliases = keystore.aliases();
+        String alias = aliases.nextElement();
+        return (PrivateKey) keystore.getKey(alias, pfxPassword.toCharArray());
+    }
 
-        String accessToken = (String) response.get("access_token");
-        if (accessToken == null) {
-            logger.info("*******************************");
-            logger.info("Access token is missing in response: {}", response);
-        } else {
-            logger.info("*******************************");
-            logger.info("Successfully received access token.");
-        }
+    /**
+     * Step 3: Request an Access Token using Certificate Authentication
+     */
+    public String getAccessToken() throws Exception {
+        String clientAssertion = generateClientAssertion();
+        MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
+        params.add("client_id", clientId);
+        params.add("client_assertion", clientAssertion);
+        params.add("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer");
+        params.add("grant_type", "client_credentials");
+        params.add("scope", "https://graph.microsoft.com/.default");
 
-        return accessToken;
+        Map response = restTemplate.postForObject(tokenUrl, params, Map.class);
+        return (String) response.get("access_token");
     }
 }
